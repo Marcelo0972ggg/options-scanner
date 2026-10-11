@@ -1,18 +1,18 @@
-name: B3 Options Scanner
+name: B3 Options Suite
 
 on:
   schedule:
-    - cron: '0 10 * * 1-5'
+    - cron: '30 13 * * 1-5'
   workflow_dispatch:
 
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -22,9 +22,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance pandas numpy requests
 
-      - name: Run scanner script
+      - name: Run Main Scanner (45-60 DTE)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python src/scanner_trava_4560_dias.py
+        run: python src/scanner_trava_4560_dias.py
+
+      - name: Run IV Rank Scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python src/scanner_iv_rank.py
+
+      - name: Run Position Monitor
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python src/monitor_posicoes.py
+
+      - name: Run Risk Manager Calculator
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python src/gestor_risco.py
+        
