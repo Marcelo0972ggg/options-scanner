@@ -19,7 +19,7 @@ TICKERS_ACOES = [
     'PRIO3.SA',
     'ABEV3.SA',
     'RENT3.SA',
-    'ELET3.SA',
+    'AXIA3.SA',
     'SUZB3.SA',
     'GGBR4.SA',
     'CSAN3.SA',
@@ -195,4 +195,3 @@ def escanear_travas_put_4560():
 
 if __name__ == '__main__':
   escanear_travas_put_4560()
-      
