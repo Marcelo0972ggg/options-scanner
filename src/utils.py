@@ -92,3 +92,16 @@ def enviar_telegram(mensagem):
     logging.error(f'Erro ao enviar mensagem no Telegram: {e}')
     return False
   
+def calcular_iv_rank_historico(df_historico):
+  """Calcula o IV Rank completo usando o desvio padrão anualizado."""
+  returns = np.log(df_historico['Close'] / df_historico['Close'].shift(1))
+  vol_roll = returns.rolling(window=21).std() * np.sqrt(252) * 100
+  vol_dropna = vol_roll.dropna()
+  if len(vol_dropna) < 2:
+    return 50.0
+  vol_atual = vol_dropna.iloc[-1]
+  min_vol, max_vol = vol_dropna.min(), vol_dropna.max()
+  if max_vol == min_vol:
+    return 50.0
+  return round(((vol_atual - min_vol) / (max_vol - min_vol)) * 100.0, 1)
+    
