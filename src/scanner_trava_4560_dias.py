@@ -1,10 +1,19 @@
 from datetime import datetime, timedelta
+import logging
 import os
 import warnings
 import numpy as np
 import pandas as pd
-import requests
 import yfinance as yf
+
+from utils import (
+    arredondar_strike_b3,
+    calcular_iv_rank,
+    calcular_rsi,
+    enviar_telegram,
+    gerar_ticker_put,
+    validar_credenciais_telegram,
+)
 
 warnings.filterwarnings('ignore')
 
@@ -25,28 +34,8 @@ TICKERS_ACOES = [
     'CSAN3.SA',
 ]
 
-LETRAS_PUT = {
-    1: 'M',
-    2: 'N',
-    3: 'O',
-    4: 'P',
-    5: 'Q',
-    6: 'R',
-    7: 'S',
-    8: 'T',
-    9: 'U',
-    10: 'V',
-    11: 'W',
-    12: 'X',
-}
-
-
-def arredondar_strike_b3(strike):
-  return round(strike * 2) / 2
-
 
 def checar_tendencia_flexivel(df):
-  """Tendência equilibrada: Permite maior agilidade sem perder o alinhamento."""
   if len(df) < 30:
     return False
   df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
@@ -55,70 +44,36 @@ def checar_tendencia_flexivel(df):
   return p > e21 or e9 >= e21
 
 
-def calcular_iv_rank(vol_atual, series_vol):
-  min_vol, max_vol = series_vol.min(), series_vol.max()
-  if max_vol == min_vol:
-    return 50.0
-  return round(((vol_atual - min_vol) / (max_vol - min_vol)) * 100.0, 1)
-
-
-def gerar_ticker_put(ticker_base, strike, data_vencimento):
-  mes = data_vencimento.month
-  letra = LETRAS_PUT.get(mes, 'W')
-  inteiro = int(np.floor(strike))
-  centavos = int(round((strike - inteiro) * 100))
-  str_strike = (
-      f'{inteiro}' if centavos == 0 else f'{inteiro}{centavos:02d}'
-  )
-  return f'{ticker_base}{letra}{str_strike}'
-
-
-def enviar_telegram(mensagem):
-  token = os.environ.get('TELEGRAM_TOKEN')
-  chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-  if not token or not chat_id:
-    return
-  url = f'https://api.telegram.org/bot{token}/sendMessage'
-  payload = {'chat_id': chat_id, 'text': mensagem, 'parse_mode': 'Markdown'}
-  try:
-    requests.post(url, json=payload, timeout=10)
-  except Exception:
-    pass
-
-
 def escanear_travas_put_4560():
+  validar_credenciais_telegram()
+
   hoje = datetime.now()
-  vencimento_ref = hoje + timedelta(days=55)  # Janela de 45 a 60 DTE
+  vencimento_ref = hoje + timedelta(days=55)
   resultados = []
+
+  logging.info('Iniciando varredura de 45-60 DTE...')
 
   for ticker_symbol in TICKERS_ACOES:
     try:
       ativo = yf.Ticker(ticker_symbol)
       df_d = ativo.history(period='1y', interval='1d')
+
       if df_d.empty or len(df_d) < 40:
+        logging.warning(f'Dados insuficientes para {ticker_symbol}')
         continue
 
-      # Tendência flexibilizada para maior assertividade e agilidade
       tendencia_ok = checar_tendencia_flexivel(df_d)
+      rsi = calcular_rsi(df_d)
 
-      # IFR (14) Diário
-      delta_p = df_d['Close'].diff()
-      gain = (delta_p.where(delta_p > 0, 0)).rolling(14).mean()
-      loss = (-delta_p.where(delta_p < 0, 0)).rolling(14).mean()
-      rsi = (100 - (100 / (1 + (gain / loss)))).iloc[-1]
-
-      # Filtro de Pullback (Volume controlado)
       vol_hoje = df_d['Volume'].iloc[-1]
       vol_media20 = df_d['Volume'].tail(20).mean()
       pullback_aceitavel = vol_hoje <= (vol_media20 * 1.30)
 
-      # Volatilidade e IV Rank
       returns = np.log(df_d['Close'] / df_d['Close'].shift(1))
       vol_roll = returns.rolling(window=21).std() * np.sqrt(252) * 100
       vol_atual = vol_roll.iloc[-1]
       iv_rank = calcular_iv_rank(vol_atual, vol_roll.dropna())
 
-      # Preço Spot e Afastamento (Corredor seguro e ousado: 7.5% a 11.5%)
       preco = df_d['Close'].iloc[-1]
       suporte_20d = df_d['Low'].tail(20).min()
       strike_v_calc = min(suporte_20d, preco * 0.91)
@@ -133,7 +88,6 @@ def escanear_travas_put_4560():
 
       credito_est = round(largura * 0.26, 2)
 
-      # Sistema de Pontuação Balanceado (Ousadia + Segurança)
       score = 0
       if tendencia_ok:
         score += 35
@@ -144,7 +98,6 @@ def escanear_travas_put_4560():
       if iv_rank >= 15.0:
         score += 15
 
-      # Limiar ajustado para não deixar passar boas oportunidades
       if score >= 60:
         status = '🟢 EXCELENTE (Oportunidade Ativa)'
       elif score >= 45:
@@ -166,7 +119,8 @@ def escanear_travas_put_4560():
             'Crédito Est.': f'R$ {credito_est:.2f}',
             'Status': status,
         })
-    except Exception:
+    except Exception as e:
+      logging.error(f'Erro ao processar {ticker_symbol}: {e}')
       continue
 
   if resultados:
@@ -181,7 +135,6 @@ def escanear_travas_put_4560():
           f"  Crédito Est.: {r['Crédito Est.']} | Avaliação: {r['Status']}\n\n"
       )
 
-    # Lembrete estratégico de Gestão, Rolagem e Reciclagem de Capital
     msg += (
         '💡 *Dica de Gestão & Ciclo*:\n'
         '• Verifique suas posições abertas: se alguma atingiu *65% a 75% de'
@@ -191,7 +144,10 @@ def escanear_travas_put_4560():
     )
 
     enviar_telegram(msg)
+  else:
+    logging.info('Nenhuma oportunidade atendeu aos critérios no momento.')
 
 
 if __name__ == '__main__':
   escanear_travas_put_4560()
+    
